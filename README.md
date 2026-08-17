@@ -18,6 +18,7 @@
 - 若未找到 Git Bash，会向 AI 返回明确提示。
 - `git_bash` 注册了专属 `tool.call.toolview` 工具卡片，在会话中以“Git Bash”作为一级工具卡片展示，不再落入通用的 `Tool call` 卡片。
 - 不修改项目文件，也不做全局文本替换；轨迹/导航中的工具名保留实际工具名 `git_bash`。
+- 兼容 `router-standard` 的 `standard` 模式：首个工具调用后注入一次“Git Base 模式已启用”的步骤指引，让模型后续 shell 命令改用 `git_bash`，避免继续使用 `pwsh`。
 - 执行日志写入：
   ```text
   $DSH_HOME/super-injector/ui-git-bash.log
@@ -71,4 +72,4 @@ GET  /@dsh-external/ui-git-bash/api/status
 
 - host：`lib/index.js`
 - client：`lib/client.js`
-- 打包文件：`dsh-external-ui-git-bash-0.1.0.tgz`
+- 打包文件：`dsh-external-ui-git-bash-0.1.1.tgz`

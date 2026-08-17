@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/ui-git-bash",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Replace AI Pwsh commands with Git Bash execution and provide Git Base settings",
   "private": true,
   "type": "module",
