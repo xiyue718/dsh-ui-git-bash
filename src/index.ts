@@ -201,6 +201,37 @@ export async function apply(ctx: Context): Promise<void> {
       : '',
   })
 
+  // router-standard 的 standard 模式会在首个工具调用前剥离 prompt sections 并
+  // 只暴露 shell + str_replace_editor；首个工具调用后完整工具目录虽已放开，
+  // sections 仍保持最小化。这里在首个工具调用后的下一步注入一次显式指引，
+  // 让模型从后续步骤开始优先使用 git_bash，而不是继续使用 pwsh。
+  ctx.effect(() => ctx.events.on('agent/pre-step', async (payload: any, next: any) => {
+    const decision = await next()
+    if (decision?.kind !== 'enter') return decision
+    const session = payload?.agent?.session
+    if (session === undefined || gitBashState?.mode !== 'git-bash') return decision
+    if (!Array.isArray(session.events) || !session.events.some((event: any) => event.type === 'tool/call')) {
+      return decision
+    }
+    const alreadyGuided = session.events.some((event: any) => {
+      if (event.type !== 'user/message') return false
+      const data = event.data ?? {}
+      return data.source?.kind === 'plugin'
+        && data.source?.plugin === '@dsh-external/ui-git-bash'
+        && Array.isArray(data.content)
+        && data.content.some((block: any) => block.type === 'text'
+          && typeof block.text === 'string'
+          && block.text.includes('Git Base 模式已启用'))
+    })
+    if (alreadyGuided) return decision
+    const guidance = {
+      role: 'user',
+      source: { kind: 'plugin', plugin: '@dsh-external/ui-git-bash' },
+      content: [{ type: 'text', text: 'Git Base 模式已启用：后续 shell 命令请直接使用 git_bash 工具，不要使用 pwsh。' }],
+    }
+    return { ...decision, messages: [...(decision.messages ?? []), guidance] }
+  }), '@dsh-external/ui-git-bash: git base step guidance')
+
   ctx.effect(() => (ctx as any).webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
