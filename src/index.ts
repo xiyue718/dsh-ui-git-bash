@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from 'cordis'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { z as zod } from 'zod'
 import z from 'schemastery'
 
@@ -22,6 +23,9 @@ export const inject = ['webServer', 'storageDomain', 'tools', 'systemPrompt']
 const API_PREFIX = '/@dsh-external/ui-git-bash/api'
 const CONFIG_PATH = '/@dsh-external/ui-git-bash/api/config'
 const STATUS_PATH = '/@dsh-external/ui-git-bash/api/status'
+
+const GIT_BASH_GUIDANCE_TEXT = 'Git Base 模式已启用：后续 shell 命令请直接使用 git_bash 工具，不要使用 pwsh。'
+const PWSH_RETURN_GUIDANCE_TEXT = 'Pwsh 模式已启用：后续 shell 命令请直接使用 pwsh 工具，不要使用 git_bash。'
 
 const DEFAULT_BASH_CANDIDATES = [
   'C:\\Program Files\\Git\\bin\\bash.exe',
@@ -51,6 +55,7 @@ interface GitBashState {
 }
 
 let gitBashState: GitBashState | null = null
+let gitBashToolDisposer: (() => void) | undefined = undefined
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
@@ -152,7 +157,7 @@ export async function apply(ctx: Context): Promise<void> {
     }
   }
 
-  ctx.tools.register(defineTool({
+  const createGitBashToolDefinition = () => defineTool({
     name: 'git_bash',
 
     description: 'Execute a Git Bash command and return its stdout/stderr/exit code. Use this tool when Git Base mode is enabled or when a command should run in Git Bash.',
@@ -225,7 +230,24 @@ export async function apply(ctx: Context): Promise<void> {
       const result = await executeGitBashCommand(command, cwd)
       return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode }
     },
-  }))
+  })
+
+  const syncGitBashTool = () => {
+    if (gitBashState?.mode === 'git-bash' && gitBashToolDisposer === undefined) {
+      gitBashToolDisposer = ctx.tools.register(createGitBashToolDefinition())
+    } else if (gitBashState?.mode !== 'git-bash' && gitBashToolDisposer !== undefined) {
+      gitBashToolDisposer()
+      gitBashToolDisposer = undefined
+    }
+  }
+
+  ctx.effect(() => {
+    syncGitBashTool()
+    return () => {
+      gitBashToolDisposer?.()
+      gitBashToolDisposer = undefined
+    }
+  }, '@dsh-external/ui-git-bash: git_bash tool registration')
 
   ctx.systemPrompt.section({
     name: 'tool:git_bash',
@@ -237,34 +259,54 @@ export async function apply(ctx: Context): Promise<void> {
 
   // router-standard 的 standard 模式会在首个工具调用前剥离 prompt sections 并
   // 只暴露 shell + str_replace_editor；首个工具调用后完整工具目录虽已放开，
-  // sections 仍保持最小化。这里在首个工具调用后的下一步注入一次显式指引，
-  // 让模型从后续步骤开始优先使用 git_bash，而不是继续使用 pwsh。
+  // sections 仍保持最小化。这里在首个工具调用后的下一步注入一次显式指引。
+  // 指引按“最后一次模式指引”判断：Git Base ↔ Pwsh 来回切换时都会注入对应的
+  // 新指引，覆盖上一次的模式指令，避免模型继续沿用旧模式。
+  const lastGuidanceText = (session: any): string | undefined => {
+    if (!Array.isArray(session.events)) return undefined
+    let last: string | undefined
+    for (const event of session.events) {
+      if (event.type !== 'user/message') continue
+      const data = event.data ?? {}
+      if (data.source?.kind !== 'plugin' || data.source?.plugin !== '@dsh-external/ui-git-bash') continue
+      if (!Array.isArray(data.content)) continue
+      for (const block of data.content) {
+        if (block?.type !== 'text' || typeof block.text !== 'string') continue
+        if (block.text.includes(GIT_BASH_GUIDANCE_TEXT)) last = GIT_BASH_GUIDANCE_TEXT
+        else if (block.text.includes(PWSH_RETURN_GUIDANCE_TEXT)) last = PWSH_RETURN_GUIDANCE_TEXT
+      }
+    }
+    return last
+  }
+
   ctx.effect(() => ctx.events.on('agent/pre-step', async (payload: any, next: any) => {
     const decision = await next()
     if (decision?.kind !== 'enter') return decision
     const session = payload?.agent?.session
-    if (session === undefined || gitBashState?.mode !== 'git-bash') return decision
-    if (!Array.isArray(session.events) || !session.events.some((event: any) => event.type === 'tool/call')) {
-      return decision
+    if (session === undefined) return decision
+
+    if (gitBashState?.mode === 'git-bash') {
+      if (!Array.isArray(session.events) || !session.events.some((event: any) => event.type === 'tool/call')) {
+        return decision
+      }
+      if (lastGuidanceText(session) === GIT_BASH_GUIDANCE_TEXT) return decision
+      const guidance = createUserMessage({
+        content: [{ type: 'text', text: GIT_BASH_GUIDANCE_TEXT }],
+        source: { kind: 'plugin', plugin: '@dsh-external/ui-git-bash' },
+      })
+      return { ...decision, messages: [...(decision.messages ?? []), guidance] }
     }
-    const alreadyGuided = session.events.some((event: any) => {
-      if (event.type !== 'user/message') return false
-      const data = event.data ?? {}
-      return data.source?.kind === 'plugin'
-        && data.source?.plugin === '@dsh-external/ui-git-bash'
-        && Array.isArray(data.content)
-        && data.content.some((block: any) => block.type === 'text'
-          && typeof block.text === 'string'
-          && block.text.includes('Git Base 模式已启用'))
-    })
-    if (alreadyGuided) return decision
-    const guidance = {
-      role: 'user',
-      source: { kind: 'plugin', plugin: '@dsh-external/ui-git-bash' },
-      content: [{ type: 'text', text: 'Git Base 模式已启用：后续 shell 命令请直接使用 git_bash 工具，不要使用 pwsh。' }],
+
+    if (gitBashState?.mode === 'pwsh' && lastGuidanceText(session) === GIT_BASH_GUIDANCE_TEXT) {
+      const guidance = createUserMessage({
+        content: [{ type: 'text', text: PWSH_RETURN_GUIDANCE_TEXT }],
+        source: { kind: 'plugin', plugin: '@dsh-external/ui-git-bash' },
+      })
+      return { ...decision, messages: [...(decision.messages ?? []), guidance] }
     }
-    return { ...decision, messages: [...(decision.messages ?? []), guidance] }
-  }), '@dsh-external/ui-git-bash: git base step guidance')
+
+    return decision
+  }), '@dsh-external/ui-git-bash: mode step guidance')
 
   ctx.effect(() => (ctx as any).webServer.register({
     kind: 'prefix',
@@ -306,6 +348,7 @@ export async function apply(ctx: Context): Promise<void> {
           bashPath: parsed.data.bashPath.trim(),
           mode: parsed.data.mode ?? 'git-bash',
         }
+        syncGitBashTool()
         await gitBashDomain?.table('config').put('main', gitBashState)
         sendJson(res, 200, { ok: true })
         return

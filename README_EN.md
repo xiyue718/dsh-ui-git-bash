@@ -69,8 +69,10 @@ Build artifacts: host `lib/index.js`, client `lib/client.js`, package `dsh-exter
 - `git_bash` registers a dedicated `tool.call.toolview` card, shown as a first-level "Git Bash" card instead of a generic `Tool call` card.
 - The tool card is fully aligned with the project's existing Bash tool: single-line summary, whole-row expand/collapse, chevron hover preview, TerminalBlock output, exit status, and Inspect button.
 - `git_bash` arguments match the Bash tool: `command` is required, `description` is shown in the tool card summary, and `workdir` sets the working directory (`cwd` is kept as a compatibility alias).
+- Supports switching between `Git Base` and `Pwsh` back and forth: the plugin injects the matching mode guidance on each switch, so the AI follows the current mode and uses `git_bash` or `pwsh` accordingly.
+- `git_bash` is registered in `Git Base` mode and unregistered in `Pwsh` mode, so the AI cannot keep calling Git Bash after switching back to Pwsh.
 - Does not modify project files or perform global text replacement.
-- Compatible with `router-standard`'s `standard` mode: after the first tool call, it injects a one-time "Git Base mode enabled" step guidance so the model uses `git_bash` for later shell commands instead of `pwsh`.
+- Compatible with `router-standard`'s `standard` mode: after the first tool call, it injects mode guidance so the model uses `git_bash` for later shell commands instead of `pwsh`.
 - Execution logs are written to `$DSH_HOME/super-injector/ui-git-bash.log`.
 
 ### Host API
@@ -87,6 +89,8 @@ The plugin consists of a host half and a client half.
 
 On the host side, it registers the `git_bash` tool through `ctx.tools.register`. Execution uses `execFile(bashPath, ['-lc', command])` to call Git Bash directly with `MSYS_NO_PATHCONV=1`, without going through Pwsh. The Git Bash path prefers the user configuration and falls back to common default installation paths. The tool declares `card: 'terminal'` through `presentCall` / `presentResult`, and uses `presentationMeta` to pass `stdout` / `stderr` / `exitCode` to the UI, so it shares the same terminal card data model as the Bash tool.
 
-The host also uses `ctx.systemPrompt.section` to add the guidance "When executing shell commands, use the git_bash tool directly, not pwsh" in Git Base mode. Because `router-standard`'s `standard` mode strips prompt sections before the first tool call, the plugin listens to `agent/pre-step`, detects that the session has already had a `tool/call`, and injects an explicit step guidance message. This guidance is deduplicated by checking the persisted session log, so it is not repeated after hot reloads.
+The `git_bash` tool is registered dynamically by mode: it is registered in `Git Base` mode and unregistered in `Pwsh` mode, so the AI cannot keep calling Git Bash after switching back to Pwsh.
+
+The host also uses `ctx.systemPrompt.section` to add the guidance "When executing shell commands, use the git_bash tool directly, not pwsh" in Git Base mode. Because `router-standard`'s `standard` mode strips prompt sections before the first tool call, the plugin listens to `agent/pre-step` and decides whether to inject guidance based on the last mode guidance in the session. This lets `Git Base` ↔ `Pwsh` switches inject the matching guidance each time, overriding the previous mode instruction without repeating the same guidance.
 
 On the client side, it provides the "Git Base" settings page, saves mode and path through the Host API, and registers a dedicated `git_bash` entry on `tool.call.toolview`. It uses `@deepseek-ai/dsh-client-ui-primitives`'s `TerminalBlock`, `StateDot`, and icon components to render a first-level Git Bash tool card fully aligned with `pwsh` / `bash`, including collapse/expand, chevron hover preview, running state, and Inspect button.
