@@ -1,9 +1,18 @@
 /**
  * @dsh-external/ui-git-bash — browser half.
- * Provides a "Git Base" settings page and a dedicated first-class tool card for
- * the `git_bash` tool, replacing the generic "Tool call" row in conversation.
+ * Provides a "Git Base" settings page and a Git Bash tool card that follows the
+ * same presentation and interaction model as the project's Bash tool card:
+ * collapsed summary row, whole-row expand toggle, chevron hover preview,
+ * TerminalBlock output, and an Inspect affordance.
  */
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, type KeyboardEvent } from 'react'
+import {
+  IconApiOutline14,
+  IconChevronDownOutline14,
+  IconInspectOutline12,
+  StateDot,
+  TerminalBlock,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 
 export const inject = ['slots']
 
@@ -13,7 +22,6 @@ const GIT_BASH_TOOL_CARD_CSS = `
 .dsh-git-bash-tool-card {
   display: flex;
   flex-direction: column;
-  min-width: 0;
 }
 
 .dsh-git-bash-tool-card-row {
@@ -61,8 +69,32 @@ const GIT_BASH_TOOL_CARD_CSS = `
   justify-content: center;
   margin-right: 6px;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 16px;
+}
+
+.dsh-git-bash-tool-card-chevron {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-git-bash-tool-card-icon-idle {
+  display: inline-flex;
+  opacity: 1;
+  transition: opacity 100ms ease;
+}
+
+.dsh-git-bash-tool-card-chevron-hover {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.dsh-git-bash-tool-card-row:hover .dsh-git-bash-tool-card-icon-idle {
+  opacity: 0;
+}
+
+.dsh-git-bash-tool-card-row:hover .dsh-git-bash-tool-card-chevron-hover {
+  opacity: 1;
 }
 
 .dsh-git-bash-tool-card-title {
@@ -96,28 +128,20 @@ const GIT_BASH_TOOL_CARD_CSS = `
   color: var(--dsw-alias-state-error-primary);
 }
 
-.dsh-git-bash-tool-card-dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  margin-left: 8px;
-  border-radius: 50%;
-  background: var(--dsw-alias-label-tertiary);
+.dsh-git-bash-tool-card-body-wrap {
+  display: flex;
+  flex-direction: column;
 }
 
-.dsh-git-bash-tool-card-row[data-state='ok'] .dsh-git-bash-tool-card-dot {
-  background: var(--dsw-alias-state-success-primary);
+.dsh-git-bash-tool-card-terminal {
+  --dsl-terminal-font: var(--dsw-font-markdown-code-block-small);
+  --dsl-terminal-line-height: 18px;
+  --dsl-terminal-output-max-height: 224px;
+  margin: 4px 0 4px 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
 }
 
-.dsh-git-bash-tool-card-row[data-state='error'] .dsh-git-bash-tool-card-dot {
-  background: var(--dsw-alias-state-error-primary);
-}
-
-.dsh-git-bash-tool-card-row[data-state='stopped'] .dsh-git-bash-tool-card-dot {
-  background: var(--dsw-alias-state-warning-primary, var(--dsw-alias-label-tertiary));
-}
-
-.dsh-git-bash-tool-card-body {
+.dsh-git-bash-tool-card-io-card {
   display: flex;
   flex-direction: column;
   margin: 4px 0 4px 4px;
@@ -125,46 +149,50 @@ const GIT_BASH_TOOL_CARD_CSS = `
   border-radius: 12px;
   background: var(--dsw-alias-markdown-code-block);
   font: var(--dsw-font-markdown-code-block-small);
-  overflow: hidden;
 }
 
-.dsh-git-bash-tool-card-section {
+.dsh-git-bash-tool-card-io-section {
   display: grid;
   grid-template-columns: max-content 1fr;
   column-gap: 14px;
   align-items: baseline;
   padding: 12px 16px;
-  max-height: 220px;
-  overflow: auto;
+  max-height: 150px;
+  overflow-y: auto;
 }
 
-.dsh-git-bash-tool-card-label {
+.dsh-git-bash-tool-card-io-section::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+}
+
+.dsh-git-bash-tool-card-io-section::-webkit-scrollbar-track {
+  margin: 6px 0;
+}
+
+.dsh-git-bash-tool-card-io-label {
   position: sticky;
   top: 0;
   align-self: start;
   color: var(--dsw-alias-label-caption);
-  font-size: 11px;
-  line-height: 16px;
 }
 
-.dsh-git-bash-tool-card-text {
+.dsh-git-bash-tool-card-io-divider {
+  flex: none;
+  height: 1px;
+  background: var(--dsw-alias-border-l2);
+}
+
+.dsh-git-bash-tool-card-io-text {
   min-width: 0;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--dsw-alias-label-secondary);
-  font-family: var(--dsw-font-markdown-code-block-small);
-  font-size: 12px;
-  line-height: 18px;
 }
 
-.dsh-git-bash-tool-card-text[data-error] {
+.dsh-git-bash-tool-card-io-text[data-error] {
   color: var(--dsw-alias-state-error-primary);
-}
-
-.dsh-git-bash-tool-card-divider {
-  flex: none;
-  height: 1px;
-  background: var(--dsw-alias-border-l2);
 }
 
 .dsh-git-bash-tool-card-inspect {
@@ -194,6 +222,15 @@ const GIT_BASH_TOOL_CARD_CSS = `
   background: var(--dsw-alias-interactive-bg-hover-solid);
   color: var(--dsw-alias-label-primary);
 }
+
+.dsh-git-bash-tool-card-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 `
 
 function installGitBashToolCardStyles(): () => void {
@@ -204,9 +241,18 @@ function installGitBashToolCardStyles(): () => void {
   return () => { style.remove() }
 }
 
+interface GitBashArgs {
+  command?: unknown
+  description?: unknown
+  workdir?: unknown
+  cwd?: unknown
+}
+
 interface GitBashCardModel {
   command: string
-  cwd?: string
+  description: string | undefined
+  cwd: string | undefined
+  summary: string
   body: string
   output: string | null
   errorSummary: string | null
@@ -214,9 +260,16 @@ interface GitBashCardModel {
   expandable: boolean
 }
 
-interface GitBashArgs {
-  command?: unknown
-  cwd?: unknown
+interface TerminalCardMaterial {
+  card: {
+    command: string
+    cwd: string | undefined
+    output: string | undefined
+    exitCode: number | undefined
+    signal: string | undefined
+    running: boolean
+  }
+  description: string | undefined
 }
 
 function parseGitBashArgs(argsRaw: string): GitBashArgs {
@@ -249,14 +302,23 @@ function firstLine(text: string): string {
   return nl === -1 ? text : text.slice(0, nl)
 }
 
+function pickString(args: GitBashArgs, keys: readonly (keyof GitBashArgs)[]): string | undefined {
+  for (const key of keys) {
+    const value = args[key]
+    if (typeof value === 'string' && value !== '') return value
+  }
+  return undefined
+}
+
 function gitBashCardModel(block: any): GitBashCardModel {
   const done = block !== null && typeof block === 'object' && 'kind' in block
   const argsRaw = done
     ? (block.call?.argsRaw ?? '')
     : (block.argsRaw ?? '')
   const args = parseGitBashArgs(argsRaw)
-  const command = typeof args.command === 'string' ? args.command : ''
-  const cwd = typeof args.cwd === 'string' && args.cwd !== '' ? args.cwd : undefined
+  const command = pickString(args, ['command']) ?? ''
+  const description = pickString(args, ['description'])
+  const cwd = pickString(args, ['workdir', 'cwd'])
   const state: GitBashCardModel['state'] = !done
     ? 'running'
     : block.error?.code === 'interrupted'
@@ -267,83 +329,163 @@ function gitBashCardModel(block: any): GitBashCardModel {
   const output = done ? (flattenGitBashOutput(block.content) || null) : null
   const errorSummary = state === 'error' && output !== null ? firstLine(output) : null
   const body = argsRaw === '' ? '' : JSON.stringify(args, null, 2)
+  const summary = firstLine(description ?? command) || (block?.callId ?? 'git_bash')
   const expandable = body !== '' || output !== null
-  return { command, cwd, body, output, errorSummary, state, expandable }
+  return { command, description, cwd, summary, body, output, errorSummary, state, expandable }
+}
+
+function resolveTerminalCwd(viewCwd: string | undefined, sessionCwd: string | undefined): string | undefined {
+  if (viewCwd === undefined || viewCwd === '') return sessionCwd
+  return viewCwd
+}
+
+function terminalCardModel(block: any, sessionCwd?: string): TerminalCardMaterial | null {
+  const call = block?.callView?.card === 'terminal' ? block.callView : null
+  if (!('kind' in block)) {
+    if (call === null) return null
+    return {
+      description: call.description,
+      card: {
+        command: call.title,
+        cwd: resolveTerminalCwd(call.cwd, sessionCwd),
+        output: undefined,
+        exitCode: undefined,
+        signal: undefined,
+        running: true,
+      },
+    }
+  }
+  const result = block?.resultView?.card === 'terminal' ? block.resultView : null
+  if (result === null) return null
+  return {
+    description: call?.description,
+    card: {
+      command: result.title ?? call?.title ?? '',
+      cwd: call === null ? undefined : resolveTerminalCwd(call.cwd, sessionCwd),
+      output: result.output,
+      exitCode: result.exitCode,
+      signal: result.signal,
+      running: false,
+    },
+  }
+}
+
+function terminalFailed(model: TerminalCardMaterial): boolean {
+  const { exitCode, signal, running } = model.card
+  return running !== true && ((exitCode !== undefined && exitCode !== 0) || signal !== undefined)
+}
+
+function leadingFor(state: GitBashCardModel['state']) {
+  switch (state) {
+    case 'error': return React.createElement(StateDot, { state: 'error' })
+    case 'stopped': return React.createElement(StateDot, { state: 'warning' })
+    default: return React.createElement(IconApiOutline14, { size: 14 })
+  }
+}
+
+function stateStatus(state: GitBashCardModel['state']): string | null {
+  switch (state) {
+    case 'running': return '运行中'
+    case 'error': return '失败'
+    case 'stopped': return '已停止'
+    default: return null
+  }
 }
 
 function GitBashToolCard(props: any) {
   const { block, inspect } = props
   const model = gitBashCardModel(block)
+  const cwd = props.useSessions?.(list => list.byId[props.sessionId]?.cwd)
+  const terminal = terminalCardModel(block, cwd)
+  const state = model.state === 'ok' && terminal !== null && terminalFailed(terminal)
+    ? 'error'
+    : model.state
   const [expanded, setExpanded] = React.useState(false)
-  const open = expanded && model.expandable
-
+  const genericError = terminal === null
+    && model.state === 'error'
+    && (model.body !== null || model.output !== null)
+  const expandable = terminal !== null || genericError
+  const open = expanded && expandable
+  const failureLine = state === 'error' ? model.errorSummary : null
+  const summary = failureLine ?? terminal?.description ?? model.summary
+  const status = stateStatus(state)
   const toggle = () => { setExpanded(value => !value) }
-  const toggleFromKeyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!model.expandable || (event.key !== 'Enter' && event.key !== ' ')) return
+  const toggleFromKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!expandable || (event.key !== 'Enter' && event.key !== ' ')) return
     event.preventDefault()
     toggle()
   }
-
-  const summary = model.errorSummary ?? (model.command !== '' ? firstLine(model.command) : (block?.callId ?? 'git_bash'))
-  const leading = open ? '▾' : model.expandable ? '▸' : '$'
-  const status = model.state === 'running' ? 'running'
-    : model.state === 'error' ? 'failed'
-      : model.state === 'stopped' ? 'stopped'
-        : 'ok'
+  const leading = open
+    ? React.createElement(IconChevronDownOutline14, { className: 'dsh-git-bash-tool-card-chevron' })
+    : expandable
+      ? React.createElement(React.Fragment, null,
+          React.createElement('span', { className: 'dsh-git-bash-tool-card-icon-idle' }, leadingFor(state)),
+          React.createElement(IconChevronDownOutline14, { className: 'dsh-git-bash-tool-card-chevron dsh-git-bash-tool-card-chevron-hover' }),
+        )
+      : leadingFor(state)
 
   return React.createElement('div',
     {
       className: 'dsh-git-bash-tool-card',
       'data-tool': 'git_bash',
-      'data-state': model.state,
-      'data-expandable': model.expandable || undefined,
+      'data-state': state,
+      'data-expandable': expandable || undefined,
     },
     React.createElement('div',
       {
         className: 'dsh-git-bash-tool-card-row',
-        'data-state': model.state,
-        'data-expandable': model.expandable || undefined,
-        role: model.expandable ? 'button' : undefined,
-        tabIndex: model.expandable ? 0 : undefined,
-        'aria-expanded': model.expandable ? open : undefined,
-        onClick: model.expandable ? toggle : undefined,
-        onKeyDown: model.expandable ? toggleFromKeyboard : undefined,
+        'data-state': state,
+        'data-expandable': expandable || undefined,
+        role: expandable ? 'button' : undefined,
+        tabIndex: expandable ? 0 : undefined,
+        'aria-expanded': expandable ? open : undefined,
+        onClick: expandable ? toggle : undefined,
+        onKeyDown: expandable ? toggleFromKeyboard : undefined,
       },
       React.createElement('span', { className: 'dsh-git-bash-tool-card-leading' }, leading),
+      status !== null && React.createElement('span', { className: 'dsh-git-bash-tool-card-visually-hidden' }, status),
       React.createElement('span', { className: 'dsh-git-bash-tool-card-title' }, 'Git Bash'),
       React.createElement('span', { className: 'dsh-git-bash-tool-card-sep', 'aria-hidden': true }),
       React.createElement('span',
         {
-          className: model.errorSummary !== null
+          className: failureLine !== null
             ? 'dsh-git-bash-tool-card-summary dsh-git-bash-tool-card-error-summary'
             : 'dsh-git-bash-tool-card-summary',
         },
         summary,
       ),
-      React.createElement('span', { className: 'dsh-git-bash-tool-card-dot', 'aria-label': status }),
     ),
-    open && React.createElement('div', { className: 'dsh-git-bash-tool-card-body' },
-      model.body !== '' && React.createElement('div', { className: 'dsh-git-bash-tool-card-section' },
-        React.createElement('span', { className: 'dsh-git-bash-tool-card-label' }, 'IN'),
-        React.createElement('span', { className: 'dsh-git-bash-tool-card-text' }, model.body),
-      ),
-      model.body !== '' && model.output !== null && React.createElement('div', { className: 'dsh-git-bash-tool-card-divider', 'aria-hidden': true }),
-      model.output !== null && React.createElement('div', { className: 'dsh-git-bash-tool-card-section' },
-        React.createElement('span', { className: 'dsh-git-bash-tool-card-label' }, 'OUT'),
-        React.createElement('span',
-          {
-            className: 'dsh-git-bash-tool-card-text',
-            'data-error': model.state === 'error' || undefined,
-          },
-          model.output,
-        ),
-      ),
+    open && React.createElement('div', { className: 'dsh-git-bash-tool-card-body-wrap' },
+      terminal !== null
+        ? React.createElement(TerminalBlock, {
+            ...terminal.card,
+            maxLines: Infinity,
+            className: 'dsh-git-bash-tool-card-terminal',
+          })
+        : React.createElement('div', { className: 'dsh-git-bash-tool-card-io-card' },
+            model.body !== '' && React.createElement('div', { className: 'dsh-git-bash-tool-card-io-section' },
+              React.createElement('span', { className: 'dsh-git-bash-tool-card-io-label' }, 'IN'),
+              React.createElement('span', { className: 'dsh-git-bash-tool-card-io-text' }, model.body),
+            ),
+            model.body !== '' && model.output !== null && React.createElement('div', { className: 'dsh-git-bash-tool-card-io-divider', 'aria-hidden': true }),
+            model.output !== null && React.createElement('div', { className: 'dsh-git-bash-tool-card-io-section' },
+              React.createElement('span', { className: 'dsh-git-bash-tool-card-io-label' }, 'OUT'),
+              React.createElement('span',
+                {
+                  className: 'dsh-git-bash-tool-card-io-text',
+                  'data-error': state === 'error' || undefined,
+                },
+                model.output,
+              ),
+            ),
+          ),
       inspect !== undefined && React.createElement('button',
         {
           type: 'button',
           className: 'dsh-git-bash-tool-card-inspect',
           onClick: inspect,
         },
+        React.createElement(IconInspectOutline12, null),
         'Inspect',
       ),
     ),

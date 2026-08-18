@@ -67,6 +67,8 @@ dsh --profile web --dump-config
 - 运行时优先使用用户配置的路径；未配置时自动尝试常见默认路径。
 - 若未找到 Git Bash，会向 AI 返回明确提示。
 - `git_bash` 注册了专属 `tool.call.toolview` 工具卡片，在会话中以“Git Bash”作为一级工具卡片展示，不再落入通用的 `Tool call` 卡片。
+- 工具卡片与项目现有的 Bash 工具完全对齐：单行摘要、整行展开/收起、chevron 悬停预览、TerminalBlock 输出、退出码状态和 Inspect 按钮。
+- `git_bash` 参数与 Bash 工具保持一致：`command` 必填，`description` 用于工具卡片摘要，`workdir` 指定工作目录（`cwd` 作为兼容别名）。
 - 不修改项目文件，也不做全局文本替换。
 - 兼容 `router-standard` 的 `standard` 模式：首个工具调用后注入一次“Git Base 模式已启用”的步骤指引，让模型后续 shell 命令改用 `git_bash`，避免继续使用 `pwsh`。
 - 执行日志写入 `$DSH_HOME/super-injector/ui-git-bash.log`。
@@ -83,8 +85,8 @@ GET  /@dsh-external/ui-git-bash/api/status
 
 插件由 host 和 client 两部分组成。
 
-Host 侧通过 `ctx.tools.register` 注册 `git_bash` 工具。执行时使用 `execFile(bashPath, ['-lc', command])` 直接调用 Git Bash，并设置 `MSYS_NO_PATHCONV=1`，不经过 Pwsh。Git Bash 路径优先读取用户配置，未配置时遍历常见默认安装路径。
+Host 侧通过 `ctx.tools.register` 注册 `git_bash` 工具。执行时使用 `execFile(bashPath, ['-lc', command])` 直接调用 Git Bash，并设置 `MSYS_NO_PATHCONV=1`，不经过 Pwsh。Git Bash 路径优先读取用户配置，未配置时遍历常见默认安装路径。工具通过 `presentCall` / `presentResult` 声明 `card: 'terminal'` 渲染意图，并通过 `presentationMeta` 把 `stdout` / `stderr` / `exitCode` 结构化传递给 UI，从而与 Bash 工具使用同一套终端卡片数据模型。
 
 Host 还通过 `ctx.systemPrompt.section` 在 Git Base 模式下加入“执行 shell 命令时请直接使用 git_bash 工具，不要使用 pwsh”的引导。针对 `router-standard` 的 `standard` 模式会在首个工具调用前剥离 prompt sections 的情况，插件在 `agent/pre-step` 中检测到会话已经有过 `tool/call` 后，会向模型注入一次显式步骤指引；该指引通过检查会话持久化日志去重，热重载后不会重复注入。
 
-Client 侧提供“Git Base”设置页，保存模式与路径到 host API；同时注册 `tool.call.toolview` 的 `git_bash` 专用入口，渲染为与 `pwsh` / `bash` 对齐的一级工具卡片，支持折叠/展开、运行状态和 Inspect 按钮。
+Client 侧提供“Git Base”设置页，保存模式与路径到 host API；同时注册 `tool.call.toolview` 的 `git_bash` 专用入口，使用项目 `@deepseek-ai/dsh-client-ui-primitives` 的 `TerminalBlock`、`StateDot` 和图标组件，渲染为与 `pwsh` / `bash` 完全对齐的一级工具卡片，支持折叠/展开、chevron 悬停预览、运行状态和 Inspect 按钮。

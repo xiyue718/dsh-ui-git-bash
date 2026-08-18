@@ -162,9 +162,17 @@ export async function apply(ctx: Context): Promise<void> {
         required: true,
         description: 'The Git Bash command to execute.',
       },
-      cwd: {
+      description: {
+        type: 'string',
+        description: 'Short description of what the command does. It appears in the tool card summary.',
+      },
+      workdir: {
         type: 'string',
         description: 'Optional working directory. Defaults to the current session working directory.',
+      },
+      cwd: {
+        type: 'string',
+        description: 'Alias for workdir. Prefer workdir for parity with the bash tool.',
       },
     },
     output: {
@@ -181,13 +189,39 @@ export async function apply(ctx: Context): Promise<void> {
         type: 'text',
         text: [value.stdout, value.stderr].filter(Boolean).join('\n').trim() || '(no output)',
       }],
+      presentationMeta: (_args, value) => value,
+    },
+    presentCall: (args: any) => ({
+      card: 'terminal',
+      title: typeof args.command === 'string' ? args.command : '',
+      ...(typeof args.description === 'string' && args.description !== '' ? { description: args.description } : {}),
+      ...(typeof args.workdir === 'string' && args.workdir !== ''
+        ? { cwd: args.workdir }
+        : typeof args.cwd === 'string' && args.cwd !== ''
+          ? { cwd: args.cwd }
+          : {}),
+    }),
+    presentResult: (_args: any, result: any) => {
+      if (result.isError === true) {
+        return { card: 'generic', content: result.content }
+      }
+      const meta = result.meta as { stdout?: string; stderr?: string; exitCode?: number } | undefined
+      const output = [meta?.stdout, meta?.stderr].filter(Boolean).join('\n').trim()
+      return {
+        card: 'terminal',
+        ...(output === '' ? {} : { output }),
+        ...(typeof meta?.exitCode === 'number' ? { exitCode: meta.exitCode } : {}),
+      }
     },
     async execute(args: any, exec: any) {
       const command = typeof args.command === 'string' ? args.command : ''
       if (command.trim() === '') throw new Error('command is required')
-      const cwd = typeof args.cwd === 'string' && args.cwd !== ''
-        ? args.cwd
-        : exec.cwd ?? exec.agent?.session?.header?.cwd ?? process.cwd()
+      const workdir = typeof args.workdir === 'string' && args.workdir !== ''
+        ? args.workdir
+        : typeof args.cwd === 'string' && args.cwd !== ''
+          ? args.cwd
+          : undefined
+      const cwd = workdir ?? exec.cwd ?? exec.agent?.session?.header?.cwd ?? process.cwd()
       const result = await executeGitBashCommand(command, cwd)
       return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode }
     },
