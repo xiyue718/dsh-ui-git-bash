@@ -1,6 +1,56 @@
 # @dsh-external/ui-git-bash
 
-当 AI 需要执行 Pwsh（PowerShell）命令时，自动将其替换为使用 Git Bash 命令执行，并在设置页提供“Git Base”配置，用于自定义 Git Bash 可执行文件路径。
+## 介绍
+
+`ui-git-bash` 是 DSH 的 Git Base 插件。它注册一个与 `pwsh` / `bash` 平级的独立 `git_bash` 工具，在设置页提供“Git Base”配置。启用 Git Base 模式后，AI 会优先使用 Git Bash 执行 shell 命令，而不是使用 Pwsh。
+
+## 安装
+
+### 方式一：超级模组注入器
+
+```text
+dev_build_plugin  {"dir": "C:/Users/<user>/.dsh/plugins/ui-git-bash"}
+dev_inject_plugin {"dir": "C:/Users/<user>/.dsh/plugins/ui-git-bash"}
+```
+
+打开或刷新 DSH Web，进入“设置 → Git Base”。
+
+### 方式二：dsh 命令安装（项目官方方式）
+
+如果你已安装 `dsh` CLI，可以按项目官方教程使用 `dsh plugin` 命令安装：
+
+```bash
+# 从本地插件目录安装
+dsh plugin --profile web add C:/Users/<user>/.dsh/plugins/ui-git-bash
+
+# 或从 GitHub 仓库安装
+dsh plugin --profile web add github:xiyue718/dsh-ui-git-bash
+```
+
+安装后启动：
+
+```bash
+dsh --profile web
+```
+
+查看组合配置：
+
+```bash
+dsh --profile web --dump-config
+```
+
+详细命令说明见项目文档：`docs/user/develop/basic/publish.md`。
+
+构建产物：host 为 `lib/index.js`，client 为 `lib/client.js`，打包文件为 `dsh-external-ui-git-bash-0.1.1.tgz`。
+
+## 使用
+
+1. 打开 DSH Web。
+2. 进入“设置 → Git Base”。
+3. 选择执行模式：`Pwsh` 或 `Git Base`。
+4. 在 Git Base 模式下填写 `git-bash.exe` / `bash.exe` 的完整路径，或点击“使用检测到的默认路径”。
+5. 保存后，新会话中 AI 的 shell 命令会优先调用 `git_bash` 工具。
+6. 在会话中，`git_bash` 会以独立的 “Git Bash” 工具卡片展示，和 `pwsh` / `bash` 的卡片风格一致。
 
 ## 功能
 
@@ -10,57 +60,18 @@
 - 设置页新增“Git Base”：
   - 可切换执行模式：`Pwsh` / `Git Base`；
   - 选中 `Pwsh` 时不替换命令，保持原 PowerShell 执行；
-  - 选中 `Git Base` 时自动转换为 Git Bash 命令执行；
+  - 选中 `Git Base` 时引导 AI 使用 Git Bash 命令执行；
   - 可填写 `git-bash.exe` / `bash.exe` 的完整路径；
   - 可一键填入检测到的系统默认路径；
   - 配置通过项目 storage domain 持久化保存。
 - 运行时优先使用用户配置的路径；未配置时自动尝试常见默认路径。
 - 若未找到 Git Bash，会向 AI 返回明确提示。
 - `git_bash` 注册了专属 `tool.call.toolview` 工具卡片，在会话中以“Git Bash”作为一级工具卡片展示，不再落入通用的 `Tool call` 卡片。
-- 不修改项目文件，也不做全局文本替换；轨迹/导航中的工具名保留实际工具名 `git_bash`。
+- 不修改项目文件，也不做全局文本替换。
 - 兼容 `router-standard` 的 `standard` 模式：首个工具调用后注入一次“Git Base 模式已启用”的步骤指引，让模型后续 shell 命令改用 `git_bash`，避免继续使用 `pwsh`。
-- 执行日志写入：
-  ```text
-  $DSH_HOME/super-injector/ui-git-bash.log
-  ```
+- 执行日志写入 `$DSH_HOME/super-injector/ui-git-bash.log`。
 
-## 命令执行
-
-`git_bash` 工具直接接收 Git Bash 命令并执行，不进行 PowerShell 转换，也不经过 Pwsh。
-
-## 安装
-
-### 方式一：超级模组注入器（推荐，不修改项目文件）
-
-```text
-dev_build_plugin  {"dir": "C:/Users/<user>/.dsh/plugins/ui-git-bash"}
-dev_inject_plugin {"dir": "C:/Users/<user>/.dsh/plugins/ui-git-bash"}
-```
-
-### 方式二：使用 dsh 命令安装（项目官方方式）
-
-如果你已安装 `dsh` CLI，可以按项目官方教程使用 `dsh plugin` 命令安装：
-
-```bash
-dsh plugin --profile web add C:/Users/<user>/.dsh/plugins/ui-git-bash
-```
-
-安装后启动：
-
-```bash
-dsh --profile web
-```
-
-详细命令说明见项目文档：`docs/user/develop/basic/publish.md`。
-
-## 使用
-
-1. 打开 DSH Web。
-2. 进入 设置 → Git Base。
-3. 填写 Git Bash 路径，或点击“使用检测到的默认路径”。
-4. 保存后，AI 后续发出的 `pwsh` 命令会自动通过 Git Bash 执行。
-
-## Host API
+### Host API
 
 ```http
 GET  /@dsh-external/ui-git-bash/api/config
@@ -68,8 +79,12 @@ POST /@dsh-external/ui-git-bash/api/config
 GET  /@dsh-external/ui-git-bash/api/status
 ```
 
-## 构建产物
+## 原理
 
-- host：`lib/index.js`
-- client：`lib/client.js`
-- 打包文件：`dsh-external-ui-git-bash-0.1.1.tgz`
+插件由 host 和 client 两部分组成。
+
+Host 侧通过 `ctx.tools.register` 注册 `git_bash` 工具。执行时使用 `execFile(bashPath, ['-lc', command])` 直接调用 Git Bash，并设置 `MSYS_NO_PATHCONV=1`，不经过 Pwsh。Git Bash 路径优先读取用户配置，未配置时遍历常见默认安装路径。
+
+Host 还通过 `ctx.systemPrompt.section` 在 Git Base 模式下加入“执行 shell 命令时请直接使用 git_bash 工具，不要使用 pwsh”的引导。针对 `router-standard` 的 `standard` 模式会在首个工具调用前剥离 prompt sections 的情况，插件在 `agent/pre-step` 中检测到会话已经有过 `tool/call` 后，会向模型注入一次显式步骤指引；该指引通过检查会话持久化日志去重，热重载后不会重复注入。
+
+Client 侧提供“Git Base”设置页，保存模式与路径到 host API；同时注册 `tool.call.toolview` 的 `git_bash` 专用入口，渲染为与 `pwsh` / `bash` 对齐的一级工具卡片，支持折叠/展开、运行状态和 Inspect 按钮。
